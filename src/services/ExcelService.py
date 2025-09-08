@@ -1,146 +1,124 @@
 import logging
-from typing import List, Dict, Any, Optional
+from contextlib import contextmanager
+from typing import List, Dict, Any
+
 from openpyxl import load_workbook
 from pydantic import ValidationError
 
-from src.services.IekService import IekAPI
 from src.schemas.product import ProductResponse
+from src.services.IekService import IekAPI
 
 logger = logging.getLogger(__name__)
 
 
-class ExcelPriceCheckerOpenpyxl:
+class ExcelPriceService:
     PRICE_FIELDS = ["priceBase", "pricePersonal", "priceRoc", "priceRrc"]
 
     def __init__(self, api: IekAPI):
         self.api = api
 
     async def process_excel_file(
-        self,
-        file_path: str,
-        output_path: str,
-        article_column: str = "Article",
-        header_row: int = 1,
+            self,
+            file_path: str,
+            output_path: str,
+            article_column: str = "Артикул",
+            header_row: int = 1,
     ) -> str:
-        """
-        Открывает существующий Excel file_path, добавляет справа 4 колонки с ценами
-        и заполняет их значениями из IekAPI.get_products.
-        Если значение цены отсутствует / None / не приводимо -> записывается "ОШИБКА".
-        Возвращает путь сохранённого файла (output_path).
-        """
-        wb = load_workbook(filename=file_path)
-        ws = wb.active
+        with self._open_sheet(file_path) as ws:
+            article_col_idx = self._find_article_column(ws, article_column, header_row)
+            rows_by_article = self._collect_articles(ws, article_col_idx, header_row)
 
-        # Найти колонку с артикулами по заголовку
-        article_col_idx: Optional[int] = None
+            price_col_indexes = self._prepare_price_columns(ws, header_row)
+
+            products = await self.api.get_products(list(rows_by_article.keys()))
+            products_map = {p["article"]: p["result"] for p in products if isinstance(p, dict)}
+
+            self._fill_prices(ws, rows_by_article, products_map, price_col_indexes)
+
+            ws.parent.save(output_path)
+            logger.info("Результат сохранён в %s", output_path)
+        return output_path
+
+    @staticmethod
+    @contextmanager
+    def _open_sheet(file_path: str):
+        wb = load_workbook(filename=file_path)
+        try:
+            yield wb.active
+        finally:
+            wb.close()
+
+
+    @staticmethod
+    def _find_article_column(ws, article_column: str, header_row: int) -> int:
         for col in range(1, ws.max_column + 1):
             if ws.cell(row=header_row, column=col).value == article_column:
-                article_col_idx = col
-                break
-        if article_col_idx is None:
-            raise ValueError(f"Колонка с заголовком '{article_column}' не найдена в строке {header_row}")
+                return col
+        raise ValueError(f"Колонка '{article_column}' не найдена в строке {header_row}")
 
-        # Собираем строки по артикулам (включая пустые строки — будут помечены ОШИБКА)
-        rows_by_article: Dict[str, List[int]] = {}
+    @staticmethod
+    def _collect_articles(ws, article_col_idx: int, header_row: int) -> dict[str, list[int]]:
+        rows: Dict[str, list[int]] = {}
         for row in range(header_row + 1, ws.max_row + 1):
             raw = ws.cell(row=row, column=article_col_idx).value
-            art = str(raw).strip() if raw is not None and str(raw).strip() != "" else ""
-            rows_by_article.setdefault(art, []).append(row)
+            art = str(raw).strip() if raw else ""
+            rows.setdefault(art, []).append(row)
+        return rows
 
-        # Подготовим колонки для цен — добавим справа (чтобы точно были после всех существующих)
+    def _prepare_price_columns(self, ws, header_row: int) -> List[int]:
         start_col = ws.max_column + 1
-        price_col_indexes: List[int] = []
-        for i, fld in enumerate(self.PRICE_FIELDS):
+        indexes = []
+        for i, field in enumerate(self.PRICE_FIELDS):
             col_idx = start_col + i
-            ws.cell(row=header_row, column=col_idx, value=fld)
-            price_col_indexes.append(col_idx)
+            ws.cell(row=header_row, column=col_idx, value=field)
+            indexes.append(col_idx)
+        return indexes
 
-        # Запрос к API
-        unique_articles = list(rows_by_article.keys())
-        products_results = await self.api.get_products(unique_articles)
+    def _fill_prices(
+            self,
+            ws,
+            rows_by_article: dict[str, list[int]],
+            products: dict[str, Any | Exception],
+            price_col_indexes: list[int],
+    ):
+        for article, rows in rows_by_article.items():
+            result = products.get(article)
+            product = self._validate_result(article, result)
 
-        # Составляем словарь article -> raw result
-        result_map: Dict[str, Any] = {}
-        for item in products_results:
-            art = item.get("article")
-            key = str(art).strip() if art is not None else ""
-            result_map[key] = item.get("result")
+            for row in rows:
+                if product is None or isinstance(product, Exception):
+                    self._write_error(ws, row, price_col_indexes)
+                else:
+                    self._write_product(ws, row, price_col_indexes, product)
 
-        # Вспомогательные функции записи
-        def write_error_to_row(r: int):
-            for col in price_col_indexes:
-                ws.cell(row=r, column=col, value="ОШИБКА")
-
-        def write_value_to_cell(r: int, col_index: int, value: Any):
-            ws.cell(row=r, column=col_index, value=value)
-
-        def safe_to_float(v: Any) -> Optional[float]:
-            if v is None:
-                return None
+    @staticmethod
+    def _validate_result(article: str, result: Any) -> ProductResponse | None:
+        if result is None or isinstance(result, Exception):
+            return None
+        if isinstance(result, ProductResponse):
+            return result
+        if isinstance(result, dict):
             try:
-                return float(v)
-            except Exception:
-                return None
+                return ProductResponse.model_validate(result)
+            except ValidationError as e:
+                logger.warning("Ошибка валидации для артикула %s: %s", article, e)
+        return None
 
-        # Основной проход: для каждого артикула — для каждой строки записываем 4 ячейки
-        for art, rows in rows_by_article.items():
-            res = result_map.get(art)
+    @staticmethod
+    def _safe_float(v: Any) -> float | None:
+        try:
+            return float(v) if v is not None else None
+        except Exception:
+            return None
 
-            # Если результата нет или это Exception — помечаем ОШИБКА во всех полях
-            if res is None or isinstance(res, Exception):
-                for r in rows:
-                    write_error_to_row(r)
-                continue
+    def _write_product(
+            self, ws, row: int, price_col_indexes: list[int], product: ProductResponse
+    ):
+        for i, field in enumerate(self.PRICE_FIELDS):
+            val = self._safe_float(getattr(product, field, None))
+            ws.cell(row=row, column=price_col_indexes[i], value=val if val is not None else "НЕТ ДАННЫХ")
 
-            # Если уже экземпляр ProductResponse
-            if isinstance(res, ProductResponse):
-                for r in rows:
-                    for i, fld in enumerate(self.PRICE_FIELDS):
-                        val = getattr(res, fld, None)
-                        fv = safe_to_float(val)
-                        if fv is None:
-                            write_value_to_cell(r, price_col_indexes[i], "ОШИБКА")
-                        else:
-                            write_value_to_cell(r, price_col_indexes[i], fv)
-                continue
-
-            # Если dict-like — попробуем валидировать через Pydantic (модель допускает None в полях)
-            if isinstance(res, dict):
-                try:
-                    product = ProductResponse.model_validate(res)
-                    # используем модель (она может содержать None в полях)
-                    for r in rows:
-                        for i, fld in enumerate(self.PRICE_FIELDS):
-                            val = getattr(product, fld, None)
-                            fv = safe_to_float(val)
-                            if fv is None:
-                                write_value_to_cell(r, price_col_indexes[i], "ОШИБКА")
-                            else:
-                                write_value_to_cell(r, price_col_indexes[i], fv)
-                    continue
-                except ValidationError as ve:
-                    # маловероятно, но если валидация не удалась — делаем максимально терпимое извлечение
-                    logger.warning("ValidationError для артикула %s: %s", art, ve)
-                    for r in rows:
-                        for i, fld in enumerate(self.PRICE_FIELDS):
-                            raw_val = res.get(fld) if isinstance(res, dict) else None
-                            fv = safe_to_float(raw_val)
-                            if fv is None:
-                                write_value_to_cell(r, price_col_indexes[i], "ОШИБКА")
-                            else:
-                                write_value_to_cell(r, price_col_indexes[i], fv)
-                    continue
-                except Exception as e:
-                    logger.exception("Unexpected error validating article %s: %s", art, e)
-                    for r in rows:
-                        write_error_to_row(r)
-                    continue
-
-            # Неподдерживаемый формат результата — помечаем как ОШИБКА
-            for r in rows:
-                write_error_to_row(r)
-
-        # Сохраняем результат
-        wb.save(output_path)
-        logger.info("Результат сохранён в %s", output_path)
-        return output_path
+    @staticmethod
+    def _write_error(ws, row: int, price_col_indexes: list[int]):
+        for col in price_col_indexes:
+            ws.cell(row=row, column=col, value="НЕТ ДАННЫХ")
