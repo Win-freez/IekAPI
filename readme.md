@@ -45,17 +45,17 @@ DEF456	Товар 2	...`
 Базовое использование
 
 `bash
-poetry run python src/main.py path/to/your/file.xlsx`
+poetry run python -m  src.main path/to/your/file.xlsx`
 ### Расширенные параметры
 `bash`
 #### Указание другого имени столбца с артикулами
-`poetry run python src/main.py file.xlsx --article-column "Код товара"`
+`poetry run python -m  src.main file.xlsx --article-column "Код товара"`
 
 #### Указание строки с заголовками
-`poetry run python src/main.py file.xlsx --header-row 2`
+`poetry run python -m  src.main file.xlsx --header-row 2`
 #### Полный синтаксис
 bash
-`poetry run python src/main.py [-h] [--article-column ARTICLE_COLUMN] [--header-row HEADER_ROW] file`
+`poetry run python -m  src.main [-h] [--article-column ARTICLE_COLUMN] [--header-row HEADER_ROW] file`
 
 #### Параметры:
 - `file` - путь к Excel-файлу для обработки (обязательный)
