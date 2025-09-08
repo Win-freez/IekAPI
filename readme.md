@@ -17,24 +17,21 @@
 - Клонируйте репозиторий:
 
 `bash
-git clone <ваш-репозиторий>
-cd <папка-проекта>`
+git clone https://github.com/Win-freez/IekAPI
+cd IekAPI`
 - Установите зависимости с помощью Poetry:
 
 `bash
-poetry install`
-- Активируйте виртуальное окружение:
-`bash
-poetry shell`
+poetry install --no-root`
 
 ### 🔧 Настройка окружения
 - Перед использованием создайте файл .env в корневой папке проекта со следующими переменными:
 
 `env
-IEK_USERNAME=your_iek_username
-IEK_PASSWORD=your_iek_password`
+IEK_USERNAME=ВАША УЧЕТНАЯ ЗАПИСЬ (email)
+IEK_PASSWORD=ВАШ ПАРОЛЬ`
 
-- Замените your_iek_username и your_iek_password на ваши реальные учетные данные для доступа к API IEK.
+- Замените на ваши реальные учетные данные для доступа к API IEK.
 
 ### 📊 Подготовка Excel-файла
 Ваш Excel-файл должен содержать столбец с артикулами товаров. По умолчанию инструмент ищет столбец с названием "Артикул", но это можно изменить при запуске.
@@ -48,17 +45,17 @@ DEF456	Товар 2	...`
 Базовое использование
 
 `bash
-python main.py path/to/your/file.xlsx`
+poetry run python src/main.py path/to/your/file.xlsx`
 ### Расширенные параметры
 `bash`
 #### Указание другого имени столбца с артикулами
-`python main.py file.xlsx --article-column "Код товара"`
+`poetry run python src/main.py file.xlsx --article-column "Код товара"`
 
 #### Указание строки с заголовками
-`python main.py file.xlsx --header-row 2`
+`poetry run python src/main.py file.xlsx --header-row 2`
 #### Полный синтаксис
 bash
-`python main.py [-h] [--article-column ARTICLE_COLUMN] [--header-row HEADER_ROW] file`
+`poetry run python src/main.py [-h] [--article-column ARTICLE_COLUMN] [--header-row HEADER_ROW] file`
 
 #### Параметры:
 - `file` - путь к Excel-файлу для обработки (обязательный)
@@ -85,4 +82,4 @@ bash
 - Для больших файлов обработка может занять некоторое время. Инструмент логирует прогресс в консоли.
 
 ### 📝 Логирование
-Приложение ведет подробное логирование, которое помогает отслеживать процесс обработки и диагностировать проблемы. Логи выводятся в консоль и сохраняются в файл app.log.
+Приложение ведет подробное логирование, которое помогает отслеживать процесс обработки и диагностировать проблемы. Логи выводятся в консоль.
