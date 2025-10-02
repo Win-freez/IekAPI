@@ -42,7 +42,7 @@ IEK_PASSWORD=ВАШ ПАРОЛЬ`
 ABC123	Товар 1	...
 DEF456	Товар 2	...`
 ### 🎯 Использование через графический интерфейс
-Откройте файл main.py и следуйте указаниям
+poetry run python -m  src.main
 #### Полный синтаксис
 bash
 `poetry run python -m  src.main [-h] [--article-column ARTICLE_COLUMN] [--header-row HEADER_ROW] file`
